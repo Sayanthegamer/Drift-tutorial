@@ -65,15 +65,14 @@ export default function Car({ chassisRef }: CarProps) {
     const body = chassisRef.current
     if (!body || !world || !rapier) return
 
-    // NEW CORRECT APPROACH FOR V2.x
-    // Cast to any to prevent TypeScript from complaining about undocumented internal engine properties
-    const rawWorld = (world as any).raw || world;
-    const rawBody = (body as any).raw || body;
-    const controller = rawWorld.createVehicleController(rawBody)
+    const rawWorld = (world as any).raw || world
+    const rawBody = (body as any).raw || body
 
-    // Configure vehicle axes (Y-up, Z-forward) using property assignment
-      controller.indexUpAxis = 1
-      controller.indexForwardAxis = 2
+    // Pass the configuration object directly into the initialization function
+    const controller = rawWorld.createVehicleController(rawBody, {
+      indexUpAxis: 1,
+      indexForwardAxis: 2
+    })
 
     // Add wheels
     const suspensionDirection = createRapierVector(rapier, 0, -1, 0)
