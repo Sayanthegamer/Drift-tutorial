@@ -217,20 +217,24 @@ export default function Car({ chassisRef }: CarProps) {
 
     // Sync visual wheels - positioned in chassis-local space
     for (let i = 0; i < 4; i++) {
-      const mesh = wheelRefs.current[i]
-      if (!mesh) continue
+      const group = wheelRefs.current[i] as any
+      if (!group) continue
 
       const cfg = WHEEL_CONFIGS[i]
       const suspLength = controller.wheelSuspensionLength(i)
       const wheelRot = controller.wheelRotation(i)
+      const steering = controller.wheelSteering(i) ?? 0
 
       if (suspLength === null || wheelRot === null) continue
 
       // Local position = connection point + suspension along local -Y
-      mesh.position.set(cfg.connection[0], cfg.connection[1] - suspLength, cfg.connection[2])
+      group.position.set(cfg.connection[0], cfg.connection[1] - suspLength, cfg.connection[2])
 
-      // Apply wheel rotation around the axle
-      mesh.rotation.set(wheelRot * (cfg.isLeft ? -1 : 1), 0, 0)
+      // X-axis rolls forward/backward, Y-axis steers left/right for front wheels
+      const roll = wheelRot * (cfg.isLeft ? -1 : 1)
+      const steer = cfg.isFront ? steering : 0
+
+      group.rotation.set(roll, steer, 0)
     }
   })
 
@@ -265,16 +269,17 @@ export default function Car({ chassisRef }: CarProps) {
 
         {/* Visual wheels - children of RigidBody, move with chassis */}
         {WHEEL_CONFIGS.map((cfg, idx) => (
-          <mesh
+          <group
             key={idx}
-            ref={(el) => { wheelRefs.current[idx] = el }}
+            ref={(el) => { wheelRefs.current[idx] = el as any }}
             position={cfg.connection}
-            rotation={[Math.PI / 2, 0, 0]}
-            castShadow
           >
-            <cylinderGeometry args={[WHEEL_RADIUS, WHEEL_RADIUS, WHEEL_HEIGHT, 24]} />
-            <meshStandardMaterial color="#1a1a1a" />
-          </mesh>
+            {/* Inner mesh handles the structural 90-degree flip to lay the cylinder flat on the axle */}
+            <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
+              <cylinderGeometry args={[WHEEL_RADIUS, WHEEL_RADIUS, WHEEL_HEIGHT, 24]} />
+              <meshStandardMaterial color="#1a1a1a" />
+            </mesh>
+          </group>
         ))}
       </RigidBody>
     </group>
