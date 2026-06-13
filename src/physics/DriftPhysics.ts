@@ -79,6 +79,8 @@ export interface DriftPhysicsArgs {
   effectiveMu: number
   /** Handbrake force multiplier from assists */
   handbrakeForceMultiplier: number
+  /** Current engine force applied to the rear wheels */
+  engineForce: number
 }
 
 export interface DriftPhysicsResult {
@@ -154,6 +156,7 @@ export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
     wheelConfigs,
     effectiveMu,
     handbrakeForceMultiplier,
+    engineForce,
   } = args
 
   const wheelData: WheelDriftData[] = []
@@ -216,8 +219,8 @@ export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
       )
 
       // 9. Friction ellipse: reduce lateral grip when using longitudinal force
-      const engineForce = vehicleController.wheelEngineForce(i) ?? 0
-      const normalizedLong = Math.abs(engineForce) / MAX_LONG_FORCE
+      const wheelEngineForce = cfg.isFront ? 0 : engineForce
+      const normalizedLong = Math.abs(wheelEngineForce) / MAX_LONG_FORCE
       const ellipseFactor = Math.sqrt(Math.max(0, 1 - normalizedLong * normalizedLong))
       const availableLateral = effectiveMu * ellipseFactor * normalLoad
       const lateralRatio = Math.abs(lateralForce) / Math.max(availableLateral, 1)
