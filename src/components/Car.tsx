@@ -65,11 +65,13 @@ export default function Car({ chassisRef }: CarProps) {
     const body = chassisRef.current
     if (!body || !world || !rapier) return
 
-    const controller = world.createVehicleController(body)
+    const rawWorld = (world as any).raw()
+    const rawBody = (body as any).raw()
+    const controller = rawWorld.createVehicleController(rawBody)
 
     // Configure vehicle axes (Y-up, Z-forward)
     controller.indexUpAxis = 1
-    controller.setIndexForwardAxis = 2
+    controller.setIndexForwardAxis(2)
 
     // Add wheels
     const suspensionDirection = createRapierVector(rapier, 0, -1, 0)
@@ -95,7 +97,6 @@ export default function Car({ chassisRef }: CarProps) {
 
     return () => {
       controller.free()
-      world.removeVehicleController(controller)
       controllerRef.current = null
     }
   }, [world, rapier, chassisRef])
@@ -107,6 +108,11 @@ export default function Car({ chassisRef }: CarProps) {
     const input = useInputStore.getState()
     const chassis = chassisRef.current
     const mode = useGameStore.getState().mode
+
+    // Engine force - rear wheels (2, 3)
+    let engineForce = 0
+    if (input.forward) engineForce = ENGINE_FORCE
+    else if (input.backward) engineForce = -ENGINE_FORCE * 0.6
 
     // --- Compute raw steering from input ---
     let rawTargetSteer = 0
@@ -148,6 +154,7 @@ export default function Car({ chassisRef }: CarProps) {
         wheelConfigs: WHEEL_CONFIGS,
         effectiveMu: assistParams.effectiveMu,
         handbrakeForceMultiplier: assistParams.handbrakeForceMultiplier,
+        engineForce,
       })
 
       // Update drift detection system with rear wheel slip data
@@ -176,11 +183,7 @@ export default function Car({ chassisRef }: CarProps) {
     controller.setWheelSteering(0, currentSteer.current)
     controller.setWheelSteering(1, currentSteer.current)
 
-    // Engine force - rear wheels (2, 3)
-    let engineForce = 0
-    if (input.forward) engineForce = ENGINE_FORCE
-    else if (input.backward) engineForce = -ENGINE_FORCE * 0.6
-
+    // Apply engine force to rear wheels (2, 3)
     controller.setWheelEngineForce(2, engineForce)
     controller.setWheelEngineForce(3, engineForce)
 
