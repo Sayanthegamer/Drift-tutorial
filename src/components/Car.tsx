@@ -82,7 +82,7 @@ export default function Car({ chassisRef }: CarProps) {
       const connection = createRapierVector(rapier, cfg.connection[0], cfg.connection[1], cfg.connection[2])
       const axleDir = createRapierVector(rapier, cfg.isLeft ? -1 : 1, 0, 0)
 
-      controller.addWheel(connection, suspensionDirection, axleDir, 0.4, WHEEL_RADIUS)
+      controller.addWheel(connection, suspensionDirection, axleDir, 0.3, WHEEL_RADIUS)
 
       // Configure suspension
       controller.setWheelSuspensionStiffness(i, 30)
@@ -239,14 +239,14 @@ export default function Car({ chassisRef }: CarProps) {
   })
 
   return (
-    <group position={[0, 1.5, 0]}>
-      {/* Chassis rigid body */}
+    <group position={[0, 0, 0]}>
+      {/* Chassis rigid body - elevated safely to allow suspension initialization */}
       <RigidBody
         ref={chassisRef}
         type="dynamic"
         colliders={false}
         mass={150}
-        position={[0, BODY_HEIGHT / 2, 0]}
+        position={[0, 1.0, 0]}
         enabledRotations={[true, true, true]}
       >
         <CuboidCollider
