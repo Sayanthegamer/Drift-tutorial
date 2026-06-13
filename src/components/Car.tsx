@@ -65,8 +65,9 @@ export default function Car({ chassisRef }: CarProps) {
     const body = chassisRef.current
     if (!body || !world || !rapier) return
 
-    const rawWorld = (world as any).raw()
-    const rawBody = (body as any).raw()
+    // NEW CORRECT APPROACH FOR V2.x
+    const rawWorld = world.raw || world;
+    const rawBody = body.raw || body;
     const controller = rawWorld.createVehicleController(rawBody)
 
     // Configure vehicle axes (Y-up, Z-forward)
