@@ -3,7 +3,12 @@ import { Mesh } from 'three'
 import { RigidBody, useRapier, CuboidCollider } from '@react-three/rapier'
 import { useFrame } from '@react-three/fiber'
 import { useInputStore } from '../store/inputStore'
+import { useGameStore } from '../store/gameStore'
+import { updateDriftPhysics } from '../physics/DriftPhysics'
+import { getDriftAssistParams, applyAssists } from '../physics/AssistsManager'
+import { createDriftDetectionSystem } from '../physics/DriftDetectionSystem'
 import type { RapierRigidBody } from '@react-three/rapier'
+import type { DriftState } from '../physics/DriftDetectionSystem'
 
 const BODY_WIDTH = 1.2
 const BODY_HEIGHT = 0.4
@@ -38,10 +43,21 @@ interface CarProps {
   chassisRef: React.RefObject<RapierRigidBody | null>
 }
 
+const DEFAULT_DRIFT_STATE: DriftState = {
+  isDrifting: false,
+  driftAngle: 0,
+  yawRate: 0,
+  driftDuration: 0,
+  driftScore: 0,
+}
+
 export default function Car({ chassisRef }: CarProps) {
   const wheelRefs = useRef<(Mesh | null)[]>([null, null, null, null])
   const controllerRef = useRef<any>(null)
   const currentSteer = useRef(0)
+  const driftDetectionRef = useRef(createDriftDetectionSystem())
+  const driftStateRef = useRef<DriftState>(DEFAULT_DRIFT_STATE)
+  const lastDriftScoreRef = useRef(0)
   const { world, rapier } = useRapier()
 
   // Create the vehicle controller once the chassis rigid body is ready
@@ -89,12 +105,72 @@ export default function Car({ chassisRef }: CarProps) {
     if (!controller) return
 
     const input = useInputStore.getState()
+    const chassis = chassisRef.current
+    const mode = useGameStore.getState().mode
 
-    // Steering - smooth interpolation
-    let targetSteer = 0
-    if (input.left) targetSteer = MAX_STEER
-    else if (input.right) targetSteer = -MAX_STEER
-    currentSteer.current += (targetSteer - currentSteer.current) * Math.min(1, 10 * delta)
+    // --- Compute raw steering from input ---
+    let rawTargetSteer = 0
+    if (input.left) rawTargetSteer = MAX_STEER
+    else if (input.right) rawTargetSteer = -MAX_STEER
+
+    // --- DRIFT PHYSICS (runs before controller.updateVehicle) ---
+    if (chassis) {
+      // Get chassis velocity and rotation from Rapier
+      const linvel = chassis.linvel()
+      const angvel = chassis.angvel()
+      const rotation = chassis.rotation()
+
+      // Get assist params for the current mode
+      const assistParams = getDriftAssistParams(mode)
+
+      // Apply driving assists (counter-steer during drift)
+      const driftState = driftStateRef.current
+      const { adjustedSteer } = applyAssists(rawTargetSteer, driftState, assistParams)
+
+      // Clamp adjusted steer
+      const clampedSteer = Math.max(-MAX_STEER, Math.min(MAX_STEER, adjustedSteer))
+
+      // Run drift physics — modulates per-wheel friction slip based on Pacejka
+      const driftResult = updateDriftPhysics({
+        vehicleController: controller,
+        chassis,
+        chassisRotation: rotation,
+        chassisLinvel: linvel,
+        chassisAngvel: angvel,
+        input: {
+          steerInput: clampedSteer / MAX_STEER,
+          throttleInput: input.forward ? 1 : input.backward ? -0.6 : 0,
+          brakeInput: 0,
+          handbrake: input.handbrake,
+        },
+        mode,
+        dt: delta,
+        wheelConfigs: WHEEL_CONFIGS,
+        effectiveMu: assistParams.effectiveMu,
+        handbrakeForceMultiplier: assistParams.handbrakeForceMultiplier,
+      })
+
+      // Update drift detection system with rear wheel slip data
+      const rearSlipAngles = [
+        driftResult.wheelData[2].slipAngleRad,
+        driftResult.wheelData[3].slipAngleRad,
+      ]
+      const newDriftState = driftDetectionRef.current.update(rearSlipAngles, angvel, delta)
+      driftStateRef.current = newDriftState
+
+      // Accumulate drift score to game store (only add the delta)
+      const scoreDelta = newDriftState.driftScore - lastDriftScoreRef.current
+      if (scoreDelta > 0) {
+        useGameStore.getState().addDriftScore(scoreDelta)
+      }
+      lastDriftScoreRef.current = newDriftState.driftScore
+
+      // Use the adjusted steer for the rest of the frame
+      rawTargetSteer = clampedSteer
+    }
+
+    // Steering - smooth interpolation toward target (possibly adjusted by assists)
+    currentSteer.current += (rawTargetSteer - currentSteer.current) * Math.min(1, 10 * delta)
 
     // Apply steering to front wheels (0, 1)
     controller.setWheelSteering(0, currentSteer.current)
