@@ -71,9 +71,9 @@ export default function Car({ chassisRef }: CarProps) {
     const rawBody = (body as any).raw || body;
     const controller = rawWorld.createVehicleController(rawBody)
 
-    // Configure vehicle axes (Y-up, Z-forward)
-    controller.indexUpAxis = 1
-    controller.setIndexForwardAxis(2)
+    // Configure vehicle axes (Y-up, Z-forward) using property assignment
+      controller.indexUpAxis = 1
+      controller.indexForwardAxis = 2
 
     // Add wheels
     const suspensionDirection = createRapierVector(rapier, 0, -1, 0)
