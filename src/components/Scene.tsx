@@ -1,15 +1,25 @@
+import { useEffect, useRef } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls } from '@react-three/drei'
 import { Physics } from '@react-three/rapier'
 import Lighting from './Lighting'
 import TestGround from './TestGround'
 import Car from './Car'
+import ChaseCamera from './ChaseCamera'
+import { setupInputListeners } from '../store/inputStore'
+import type { RapierRigidBody } from '@react-three/rapier'
 
 export default function Scene() {
+  const carRef = useRef<RapierRigidBody>(null)
+
+  useEffect(() => {
+    const cleanup = setupInputListeners()
+    return cleanup
+  }, [])
+
   return (
     <Canvas
       shadows
-      camera={{ position: [6, 5, 8], fov: 55 }}
+      camera={{ position: [0, 5, 10], fov: 70, near: 0.1, far: 100 }}
       style={{ width: '100%', height: '100%' }}
       gl={{ antialias: true }}
     >
@@ -19,16 +29,10 @@ export default function Scene() {
 
       <Physics gravity={[0, -9.81, 0]}>
         <TestGround />
-        <Car position={[0, 1.5, 0]} />
+        <Car chassisRef={carRef} />
       </Physics>
 
-      <OrbitControls
-        enableDamping
-        dampingFactor={0.1}
-        minDistance={2}
-        maxDistance={30}
-        maxPolarAngle={Math.PI / 2.1}
-      />
+      <ChaseCamera target={carRef} />
     </Canvas>
   )
 }
