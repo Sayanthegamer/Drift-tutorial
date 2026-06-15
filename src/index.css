@@ -10,3 +10,260 @@ html, body, #root {
   overflow: hidden;
   background-color: #1a1a2e;
 }
+
+/* ------------------------------------------------------------------ */
+/* Design tokens                                                       */
+/* ------------------------------------------------------------------ */
+:root {
+  --cyan: #00e5ff;
+  --amber: #ffab00;
+  --red: #e53935;
+  --green: #4caf50;
+  --glass-bg: rgba(0, 0, 0, 0.55);
+  --glass-border: rgba(255, 255, 255, 0.08);
+  --glass-blur: 12px;
+  --font-mono: 'Courier New', 'Consolas', monospace;
+}
+
+/* ------------------------------------------------------------------ */
+/* Glass panel base                                                    */
+/* ------------------------------------------------------------------ */
+.hud-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  padding: 12px 16px;
+}
+
+/* ------------------------------------------------------------------ */
+/* HUD overlay layout                                                  */
+/* ------------------------------------------------------------------ */
+.hud-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  pointer-events: none;
+  font-family: var(--font-mono);
+  color: #fff;
+}
+
+.hud-top-left {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+}
+
+.hud-top-right {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+}
+
+.hud-right {
+  position: absolute;
+  top: 50%;
+  right: 24px;
+  transform: translateY(-50%);
+}
+
+.hud-bottom-right {
+  position: absolute;
+  bottom: 24px;
+  right: 24px;
+}
+
+.hud-bottom-left {
+  position: absolute;
+  bottom: 24px;
+  left: 24px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Speedometer                                                         */
+/* ------------------------------------------------------------------ */
+.speedometer {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.speedometer-value {
+  font-size: 3rem;
+  font-weight: 700;
+  color: var(--cyan);
+  line-height: 1;
+}
+
+.speedometer-unit {
+  font-size: 0.9rem;
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tachometer                                                          */
+/* ------------------------------------------------------------------ */
+.tachometer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px;
+  min-width: 60px;
+}
+
+.tachometer-bar-track {
+  position: relative;
+  width: 12px;
+  height: 140px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tachometer-bar-fill {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  background: linear-gradient(to top, var(--cyan), var(--amber));
+  border-radius: 6px;
+  transition: height 0.05s linear;
+}
+
+.tachometer-shift-light {
+  position: absolute;
+  top: 0;
+  width: 100%;
+  height: 10px;
+  background: var(--red);
+  animation: shift-blink 0.15s ease-in-out infinite alternate;
+}
+
+@keyframes shift-blink {
+  from { opacity: 0.4; }
+  to   { opacity: 1; }
+}
+
+.tachometer-label {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.tachometer-value {
+  font-size: 0.75rem;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.tachometer-drifting {
+  border-color: rgba(255, 171, 0, 0.3);
+}
+
+/* ------------------------------------------------------------------ */
+/* Gear indicator                                                      */
+/* ------------------------------------------------------------------ */
+.gear-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  padding: 0;
+}
+
+.gear-value {
+  font-size: 3rem;
+  font-weight: 700;
+  color: var(--cyan);
+  line-height: 1;
+}
+
+.gear-reverse {
+  color: var(--amber);
+}
+
+.gear-neutral {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.gear-drifting {
+  border-color: rgba(255, 171, 0, 0.3);
+  box-shadow: 0 0 20px rgba(255, 171, 0, 0.1);
+}
+
+/* ------------------------------------------------------------------ */
+/* Slip angle gauge                                                    */
+/* ------------------------------------------------------------------ */
+.slip-angle-gauge {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+}
+
+.slip-angle-label {
+  font-size: 0.6rem;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.slip-angle-svg {
+  width: 110px;
+  height: 65px;
+}
+
+.slip-angle-drifting {
+  border-color: rgba(255, 171, 0, 0.3);
+}
+
+/* ------------------------------------------------------------------ */
+/* Drift score                                                         */
+/* ------------------------------------------------------------------ */
+.drift-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 10px 20px;
+  min-width: 120px;
+}
+
+.drift-score-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: var(--amber);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+  animation: badge-pulse 0.8s ease-in-out infinite alternate;
+}
+
+@keyframes badge-pulse {
+  from { opacity: 0.6; }
+  to   { opacity: 1; }
+}
+
+.drift-score-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--amber);
+  line-height: 1;
+}
+
+.drift-score-label {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.4);
+  text-transform: uppercase;
+  letter-spacing: 2px;
+}
+
+.drift-score-active {
+  border-color: rgba(255, 171, 0, 0.4);
+  box-shadow: 0 0 24px rgba(255, 171, 0, 0.08);
+}

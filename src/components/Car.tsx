@@ -4,9 +4,11 @@ import { RigidBody, useRapier, CuboidCollider } from '@react-three/rapier'
 import { useFrame } from '@react-three/fiber'
 import { useInputStore } from '../store/inputStore'
 import { useGameStore } from '../store/gameStore'
+import { useTelemetryStore } from '../store/telemetryStore'
 import { updateDriftPhysics } from '../physics/DriftPhysics'
 import { getDriftAssistParams, applyAssists } from '../physics/AssistsManager'
 import { createDriftDetectionSystem } from '../physics/DriftDetectionSystem'
+import { magnitude } from '../physics/vecMath'
 import type { RapierRigidBody } from '@react-three/rapier'
 import type { DriftState } from '../physics/DriftDetectionSystem'
 
@@ -172,6 +174,45 @@ export default function Car({ chassisRef }: CarProps) {
         useGameStore.getState().addDriftScore(scoreDelta)
       }
       lastDriftScoreRef.current = newDriftState.driftScore
+
+      // --- Compute telemetry (speed, RPM, gear, slip angle) ---
+      const speedMs = magnitude(linvel)
+      const speedKmh = speedMs * 3.6
+
+      // RPM from rear wheel longitudinal velocity
+      const rearLongVel = (
+        driftResult.wheelData[2].longitudinalVelocity +
+        driftResult.wheelData[3].longitudinalVelocity
+      ) / 2
+      const wheelAngVel = Math.abs(rearLongVel) / WHEEL_RADIUS
+      let rpm = wheelAngVel / (2 * Math.PI) * 60
+      rpm = Math.max(800, Math.min(7000, rpm))
+
+      // Gear from speed / RPM ratio
+      let gear: string
+      if (engineForce < 0 && speedMs < -0.5) {
+        gear = 'R'
+      } else if (speedKmh < 0.5 && rpm < 1000) {
+        gear = 'N'
+      } else {
+        const ratio = speedKmh / (rpm + 1) * 1000
+        if (ratio < 5) gear = '1'
+        else if (ratio < 12) gear = '2'
+        else if (ratio < 22) gear = '3'
+        else if (ratio < 35) gear = '4'
+        else if (ratio < 50) gear = '5'
+        else gear = '6'
+      }
+
+      const slipAngleDeg = driftStateRef.current.driftAngle * (180 / Math.PI)
+
+      useTelemetryStore.getState().publish({
+        speedKmh,
+        rpm,
+        gear,
+        slipAngleDeg,
+        isDrifting: driftStateRef.current.isDrifting,
+      })
 
       // Use the adjusted steer for the rest of the frame
       rawTargetSteer = clampedSteer
