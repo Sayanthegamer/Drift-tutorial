@@ -228,13 +228,16 @@ export default function Car({ chassisRef }: CarProps) {
       if (suspLength === null || wheelRot === null) continue
 
       // Local position = connection point + suspension along local -Y
-      group.position.set(cfg.connection[0], cfg.connection[1] - suspLength, cfg.connection[2])
+      // The wheel center is WHEEL_RADIUS above the ground contact point
+      group.position.set(cfg.connection[0], cfg.connection[1] - suspLength + WHEEL_RADIUS, cfg.connection[2])
 
       // X-axis rolls forward/backward, Y-axis steers left/right for front wheels
       const roll = wheelRot * (cfg.isLeft ? -1 : 1)
       const steer = cfg.isFront ? steering : 0
 
-      group.rotation.set(roll, steer, 0)
+      // Explicitly set rotation axes to avoid wiping base orientation or causing visual pops
+      group.rotation.x = roll
+      group.rotation.y = steer
     }
   })
 
