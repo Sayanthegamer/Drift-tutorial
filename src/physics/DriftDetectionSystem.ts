@@ -1,4 +1,5 @@
 import type { Vec3 } from './vecMath'
+import { VEHICLE_CONFIG } from './VehicleConfig'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -11,19 +12,6 @@ export interface DriftState {
   driftDuration: number
   driftScore: number
 }
-
-// ---------------------------------------------------------------------------
-// Configuration
-// ---------------------------------------------------------------------------
-
-/** Minimum rear slip angle (rad) to consider the car drifting (~8.5°) */
-const DRIFT_ANGLE_THRESHOLD = 0.15
-
-/** Minimum yaw rate (rad/s) to consider the car rotating */
-const MIN_YAW_RATE = 0.1
-
-/** Factor for accumulating drift score per second */
-const SCORE_ACCUMULATION_RATE = 1.0
 
 // ---------------------------------------------------------------------------
 // System
@@ -68,18 +56,30 @@ export function createDriftDetectionSystem(): DriftDetectionSystem {
       yawRate = Math.abs(angvel.y)
       driftAngle = avgRearSlip
 
-      // Determine if currently drifting
+      // State machine with hysteresis
       const wasDrifting = isDrifting
-      isDrifting = avgRearSlip > DRIFT_ANGLE_THRESHOLD && yawRate > MIN_YAW_RATE
+
+      if (!wasDrifting) {
+        // Not drifting -> drifting transition
+        if (avgRearSlip > VEHICLE_CONFIG.drift.enterAngleRad && yawRate > VEHICLE_CONFIG.drift.minYawRate) {
+          isDrifting = true
+          driftDuration = 0
+        }
+      } else {
+        // Drifting -> drifting/not drifting transition
+        driftDuration += dt
+        if (avgRearSlip < VEHICLE_CONFIG.drift.exitAngleRad && driftDuration >= VEHICLE_CONFIG.drift.minDriftDurationSec) {
+          isDrifting = false
+          driftDuration = 0
+        }
+      }
 
       if (isDrifting) {
-        driftDuration += dt
-
-        // Accumulate score: integral of |yawRate| * |avgRearSlip| over time
-        driftScore += yawRate * avgRearSlip * SCORE_ACCUMULATION_RATE * dt
-      } else if (wasDrifting) {
-        // End of drift — reset duration but keep accumulated score
-        driftDuration = 0
+        // Accumulate score
+        if (!wasDrifting) {
+          driftDuration += dt
+        }
+        driftScore += yawRate * avgRearSlip * VEHICLE_CONFIG.drift.scoreAccumulationRate * dt
       }
 
       return { isDrifting, driftAngle, yawRate, driftDuration, driftScore }
