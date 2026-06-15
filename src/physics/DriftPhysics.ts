@@ -1,4 +1,5 @@
 import { computeLateralForce, DEFAULT_PACEJKA_COEFFS } from './TireModel'
+import { VEHICLE_CONFIG } from './VehicleConfig'
 import type { Vec3, Quat } from './vecMath'
 import {
   cross,
@@ -7,29 +8,49 @@ import {
   normalize,
   scale,
   add,
-  sub,
   quatRotate,
   rotateAroundAxis,
 } from './vecMath'
 
 // ---------------------------------------------------------------------------
-// Constants
+// Helpers
 // ---------------------------------------------------------------------------
 
-/** Minimum speed (m/s) below which drift physics are disabled */
-const MIN_SPEED_THRESHOLD = 0.5
+function lerp(start: number, end: number, amt: number): number {
+  return (1 - amt) * start + amt * end
+}
 
-/** Base friction slip for dry tarmac */
-const BASE_FRICTION_SLIP = 1.0
+/**
+ * Extract the wheel's local forward direction in world space.
+ * Front wheels are affected by steering; rear wheels are not.
+ */
+function getWheelForward(
+  rotation: Quat,
+  steeringAngle: number,
+  isFront: boolean,
+): Vec3 {
+  // Chassis-local forward is (0, 0, -1) — Three.js convention (-Z forward)
+  const localForward: Vec3 = { x: 0, y: 0, z: -1 }
+  const worldForward = quatRotate(rotation, localForward)
 
-/** Near-zero friction slip used when breaking traction (handbrake) */
-const SLIP_NEAR_ZERO = 0.1
+  if (!isFront || Math.abs(steeringAngle) < 0.001) {
+    return worldForward
+  }
 
-/** Maximum longitudinal force the engine can produce (matched to ENGINE_FORCE) */
-const MAX_LONG_FORCE = 800
+  // Rotate forward around the chassis up axis by the steering angle
+  const localUp: Vec3 = { x: 0, y: 1, z: 0 }
+  const worldUp = quatRotate(rotation, localUp)
+  return rotateAroundAxis(worldForward, worldUp, steeringAngle)
+}
 
-/** Forward axis index in Rapier's vehicle controller (Z = 2) */
-const FORWARD_AXIS = 2
+/**
+ * Get the wheel's lateral (axle) direction in world space.
+ * The axle is along the chassis-local X axis, with sign determined by isLeft.
+ */
+function getWheelRight(rotation: Quat, _isLeft: boolean): Vec3 {
+  const localRight: Vec3 = { x: -1, y: 0, z: 0 }
+  return quatRotate(rotation, localRight)
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -81,6 +102,10 @@ export interface DriftPhysicsArgs {
   handbrakeForceMultiplier: number
   /** Current engine force applied to the rear wheels */
   engineForce: number
+  /** Previous effective slip values per wheel */
+  prevEffectiveSlip: number[]
+  /** Previous side friction stiffness values per wheel */
+  prevSideFrictionStiffness: number[]
 }
 
 export interface DriftPhysicsResult {
@@ -89,60 +114,9 @@ export interface DriftPhysicsResult {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Extract the wheel's local forward direction in world space.
- * Front wheels are affected by steering; rear wheels are not.
- */
-function getWheelForward(
-  rotation: Quat,
-  steeringAngle: number,
-  isFront: boolean,
-): Vec3 {
-  // Chassis-local forward is (0, 0, -1) — Three.js convention (-Z forward)
-  const localForward: Vec3 = { x: 0, y: 0, z: -1 }
-  const worldForward = quatRotate(rotation, localForward)
-
-  if (!isFront || Math.abs(steeringAngle) < 0.001) {
-    return worldForward
-  }
-
-  // Rotate forward around the chassis up axis by the steering angle
-  const localUp: Vec3 = { x: 0, y: 1, z: 0 }
-  const worldUp = quatRotate(rotation, localUp)
-  return rotateAroundAxis(worldForward, worldUp, steeringAngle)
-}
-
-/**
- * Get the wheel's lateral (axle) direction in world space.
- * The axle is along the chassis-local X axis, with sign determined by isLeft.
- */
-function getWheelRight(rotation: Quat, _isLeft: boolean): Vec3 {
-  const localRight: Vec3 = { x: -1, y: 0, z: 0 }
-  return quatRotate(rotation, localRight)
-}
-
-// ---------------------------------------------------------------------------
 // Main function
 // ---------------------------------------------------------------------------
 
-/**
- * Per-frame drift physics update.
- *
- * For each wheel:
- *  1. Compute the wheel contact point velocity in world space.
- *  2. Resolve into longitudinal and lateral components in the wheel's local frame.
- *  3. Compute slip angle.
- *  4. Estimate normal load from suspension force.
- *  5. Compute Pacejka lateral force → derive desired friction slip.
- *  6. Apply friction ellipse coupling.
- *  7. Set the friction slip on the vehicle controller.
- *
- * Handbrake drops rear friction to near-zero and applies a lateral impulse
- * to kick the rear out.
- */
 export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
   const {
     vehicleController,
@@ -156,6 +130,8 @@ export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
     effectiveMu,
     handbrakeForceMultiplier,
     engineForce,
+    prevEffectiveSlip,
+    prevSideFrictionStiffness,
   } = args
 
   const wheelData: WheelDriftData[] = []
@@ -175,9 +151,10 @@ export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
     let longVel = 0
     let latVel = 0
     let isGripping = true
-    let effectiveSlip = BASE_FRICTION_SLIP
+    let targetEffectiveSlip: number = VEHICLE_CONFIG.drift.baseFrictionSlip
+    let gripMultiplier = 1.0
 
-    if (isInContact && magnitude(chassisLinvel) > MIN_SPEED_THRESHOLD) {
+    if (isInContact && magnitude(chassisLinvel) > VEHICLE_CONFIG.drift.minSpeedThreshold) {
       // 1. Wheel position relative to COM (in world space)
       const rLocal: Vec3 = {
         x: cfg.connection[0],
@@ -206,7 +183,7 @@ export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
       slipAngleRad = Math.atan2(latVel, absLong)
 
       // 7. Estimate normal load from suspension force
-      const suspensionForce = vehicleController.wheelSuspensionForce(i) ?? (150 * 9.81) / 4
+      const suspensionForce = vehicleController.wheelSuspensionForce(i) ?? (VEHICLE_CONFIG.mass * 9.81) / 4
       const normalLoad = Math.max(suspensionForce, 1)
 
       // 8. Pacejka Magic Formula lateral force
@@ -219,29 +196,46 @@ export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
 
       // 9. Friction ellipse: reduce lateral grip when using longitudinal force
       const wheelEngineForce = cfg.isFront ? 0 : engineForce
-      const normalizedLong = Math.abs(wheelEngineForce) / MAX_LONG_FORCE
+      const normalizedLong = Math.abs(wheelEngineForce) / VEHICLE_CONFIG.drivetrain.maxLongForce
       const ellipseFactor = Math.sqrt(Math.max(0, 1 - normalizedLong * normalizedLong))
       const availableLateral = effectiveMu * ellipseFactor * normalLoad
       const lateralRatio = Math.abs(lateralForce) / Math.max(availableLateral, 1)
 
       // Map to friction slip — higher ratio = less grip
-      const gripMultiplier = Math.max(0.1, 1 - lateralRatio)
-      effectiveSlip = Math.max(SLIP_NEAR_ZERO, BASE_FRICTION_SLIP * gripMultiplier)
+      gripMultiplier = Math.max(0.1, 1 - lateralRatio)
+      targetEffectiveSlip = Math.max(VEHICLE_CONFIG.drift.slipNearZero, VEHICLE_CONFIG.drift.baseFrictionSlip * gripMultiplier)
       isGripping = gripMultiplier > 0.3
     }
 
     // Handbrake override for rear wheels
     if (input.handbrake && !cfg.isFront) {
-      effectiveSlip = SLIP_NEAR_ZERO
+      targetEffectiveSlip = VEHICLE_CONFIG.drift.slipNearZero
       isGripping = false
+      gripMultiplier = 0.0
     }
 
-    // Set friction slip on the controller
-    vehicleController.setWheelFrictionSlip(i, effectiveSlip)
+    // Compute continuous side stiffness
+    const targetSideStiffness = lerp(0.3, 1.0, gripMultiplier)
 
-    // Adjust side friction stiffness — lower during slip
-    const sideStiffness = isGripping ? 1.0 : 0.3
-    vehicleController.setWheelSideFrictionStiffness(i, sideStiffness)
+    // Blend across frames using low-pass filtering
+    const slipAlpha = 1 - Math.exp(-dt / VEHICLE_CONFIG.smoothing.frictionSlipTauSec)
+    const sideAlpha = 1 - Math.exp(-dt / VEHICLE_CONFIG.smoothing.sideFrictionTauSec)
+
+    const prevSlip = prevEffectiveSlip[i] ?? VEHICLE_CONFIG.drift.baseFrictionSlip
+    const prevStiffness = prevSideFrictionStiffness[i] ?? 1.0
+
+    const blendedSlip = lerp(prevSlip, targetEffectiveSlip, slipAlpha)
+    const blendedStiffness = lerp(prevStiffness, targetSideStiffness, sideAlpha)
+
+    // Save back to previous states
+    prevEffectiveSlip[i] = blendedSlip
+    prevSideFrictionStiffness[i] = blendedStiffness
+
+    // Set friction slip on the controller
+    vehicleController.setWheelFrictionSlip(i, blendedSlip)
+
+    // Set side friction stiffness
+    vehicleController.setWheelSideFrictionStiffness(i, blendedStiffness)
 
     wheelData.push({
       index: i,
@@ -250,12 +244,12 @@ export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
       longitudinalVelocity: longVel,
       lateralVelocity: latVel,
       isGripping,
-      effectiveFrictionSlip: effectiveSlip,
+      effectiveFrictionSlip: blendedSlip,
     })
   }
 
   // Handbrake lateral impulse — kick the rear out using applyImpulseAtPoint for yaw torque
-  if (input.handbrake && Math.abs(forwardSpeed) > MIN_SPEED_THRESHOLD) {
+  if (input.handbrake && Math.abs(forwardSpeed) > VEHICLE_CONFIG.drift.minSpeedThreshold) {
     appliedHandbrakeImpulse = true
 
     // Direction perpendicular to chassis forward (right direction)

@@ -6,30 +6,31 @@ import { useInputStore } from '../store/inputStore'
 import { useGameStore } from '../store/gameStore'
 import { useTelemetryStore } from '../store/telemetryStore'
 import { setVisualEffectsData } from '../store/visualEffectsStore'
-import { updateDriftPhysics } from '../physics/DriftPhysics'
-import { getDriftAssistParams, applyAssists } from '../physics/AssistsManager'
-import { createDriftDetectionSystem } from '../physics/DriftDetectionSystem'
-import { magnitude, quatRotate } from '../physics/vecMath'
+import {
+  VEHICLE_CONFIG,
+  updateDriftPhysics,
+  getDriftAssistParams,
+  applyAssists,
+  computeStabilityTorque,
+  computeResistanceForce,
+  createDriftDetectionSystem,
+} from '../physics'
+import type { WheelConfig } from '../physics'
+import { magnitude, quatRotate, scale } from '../physics/vecMath'
 import type { RapierRigidBody } from '@react-three/rapier'
 import type { DriftState } from '../physics/DriftDetectionSystem'
 
 const BODY_WIDTH = 1.2
 const BODY_HEIGHT = 0.4
 const BODY_LENGTH = 2.4
-const WHEEL_RADIUS = 0.3
+const WHEEL_RADIUS = VEHICLE_CONFIG.wheelRadius
 const WHEEL_HEIGHT = 0.2
 const AXLE_OFFSET = 0.8
 
-const ENGINE_FORCE = 800
-const MAX_BRAKE_FORCE = 100
-const HANDBRAKE_FORCE = 300
-const MAX_STEER = 0.5
-
-interface WheelConfig {
-  connection: [number, number, number]
-  isLeft: boolean
-  isFront: boolean
-}
+const ENGINE_FORCE = VEHICLE_CONFIG.drivetrain.engineForce
+const MAX_BRAKE_FORCE = VEHICLE_CONFIG.drivetrain.maxBrakeForce
+const HANDBRAKE_FORCE = VEHICLE_CONFIG.drivetrain.handbrakeForce
+const MAX_STEER = VEHICLE_CONFIG.drivetrain.maxSteer
 
 const WHEEL_CONFIGS: WheelConfig[] = [
   { connection: [-BODY_WIDTH / 2 - 0.1, -BODY_HEIGHT / 2, AXLE_OFFSET],  isLeft: true,  isFront: true },
@@ -63,6 +64,10 @@ export default function Car({ chassisRef }: CarProps) {
   const lastDriftScoreRef = useRef(0)
   const { world, rapier } = useRapier()
 
+  // Track previous slip and stiffness values per wheel for low-pass filtering
+  const prevEffectiveSlip = useRef<number[]>([1.0, 1.0, 1.0, 1.0])
+  const prevSideFrictionStiffness = useRef<number[]>([1.0, 1.0, 1.0, 1.0])
+
   // Create the vehicle controller once the chassis rigid body is ready
   useEffect(() => {
     const body = chassisRef.current
@@ -86,13 +91,13 @@ export default function Car({ chassisRef }: CarProps) {
 
       controller.addWheel(connection, suspensionDirection, axleDir, 0.4, WHEEL_RADIUS)
 
-      // Configure suspension
-      controller.setWheelSuspensionStiffness(i, 50)
-      controller.setWheelSuspensionCompression(i, 8)
-      controller.setWheelSuspensionRelaxation(i, 10)
-      controller.setWheelMaxSuspensionTravel(i, 0.5)
-      controller.setWheelMaxSuspensionForce(i, 10000)
-      controller.setWheelFrictionSlip(i, 1.0)
+      // Configure suspension using VEHICLE_CONFIG parameters
+      controller.setWheelSuspensionStiffness(i, VEHICLE_CONFIG.suspension.stiffness)
+      controller.setWheelSuspensionCompression(i, VEHICLE_CONFIG.suspension.compression)
+      controller.setWheelSuspensionRelaxation(i, VEHICLE_CONFIG.suspension.relaxation)
+      controller.setWheelMaxSuspensionTravel(i, VEHICLE_CONFIG.suspension.maxTravel)
+      controller.setWheelMaxSuspensionForce(i, VEHICLE_CONFIG.suspension.maxForce)
+      controller.setWheelFrictionSlip(i, VEHICLE_CONFIG.drift.baseFrictionSlip)
       controller.setWheelSideFrictionStiffness(i, 1.0)
     }
 
@@ -129,6 +134,17 @@ export default function Car({ chassisRef }: CarProps) {
       const angvel = chassis.angvel()
       const rotation = chassis.rotation()
 
+      // Apply resistance forces (drag + rolling resistance)
+      const resistanceForce = computeResistanceForce(linvel, VEHICLE_CONFIG.resistance)
+      const resistanceForceScaled = scale(resistanceForce, delta)
+      const resistanceImpulse = createRapierVector(
+        rapier,
+        resistanceForceScaled.x,
+        resistanceForceScaled.y,
+        resistanceForceScaled.z,
+      )
+      chassis.applyImpulse(resistanceImpulse, true)
+
       // Get assist params for the current mode
       const assistParams = getDriftAssistParams(mode)
 
@@ -158,7 +174,19 @@ export default function Car({ chassisRef }: CarProps) {
         effectiveMu: assistParams.effectiveMu,
         handbrakeForceMultiplier: assistParams.handbrakeForceMultiplier,
         engineForce,
+        prevEffectiveSlip: prevEffectiveSlip.current,
+        prevSideFrictionStiffness: prevSideFrictionStiffness.current,
       })
+
+      // Stability Assist
+      const stabilityTorque = computeStabilityTorque(rotation, angvel, assistParams, delta)
+      const stabilityTorqueVec = createRapierVector(
+        rapier,
+        stabilityTorque.x,
+        stabilityTorque.y,
+        stabilityTorque.z,
+      )
+      chassis.applyTorqueImpulse(stabilityTorqueVec, true)
 
       // Update drift detection system with rear wheel slip data
       const rearSlipAngles = [
@@ -186,13 +214,13 @@ export default function Car({ chassisRef }: CarProps) {
       ) / 2
       const wheelAngVel = Math.abs(rearLongVel) / WHEEL_RADIUS
       let rpm = wheelAngVel / (2 * Math.PI) * 60
-      rpm = Math.max(800, Math.min(7000, rpm))
+      rpm = Math.max(VEHICLE_CONFIG.drivetrain.idleRpm, Math.min(VEHICLE_CONFIG.drivetrain.redlineRpm, rpm))
 
       // Gear from speed / RPM ratio
       let gear: string
       if (engineForce < 0 && speedMs < -0.5) {
         gear = 'R'
-      } else if (speedKmh < 0.5 && rpm < 1000) {
+      } else if (speedKmh < 0.5 && rpm < VEHICLE_CONFIG.drivetrain.idleRpm + 100) {
         gear = 'N'
       } else {
         const ratio = speedKmh / (rpm + 1) * 1000
@@ -316,7 +344,7 @@ export default function Car({ chassisRef }: CarProps) {
         ref={chassisRef}
         type="dynamic"
         colliders={false}
-        mass={150}
+        mass={VEHICLE_CONFIG.mass}
         position={[0, 1.0, -18]}
         enabledRotations={[true, true, true]}
       >
