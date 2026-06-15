@@ -101,8 +101,8 @@ function getWheelForward(
   steeringAngle: number,
   isFront: boolean,
 ): Vec3 {
-  // Chassis-local forward is (0, 0, 1) when indexForwardAxis = 2
-  const localForward: Vec3 = { x: 0, y: 0, z: 1 }
+  // Chassis-local forward is (0, 0, -1) — Three.js convention (-Z forward)
+  const localForward: Vec3 = { x: 0, y: 0, z: -1 }
   const worldForward = quatRotate(rotation, localForward)
 
   if (!isFront || Math.abs(steeringAngle) < 0.001) {
@@ -119,9 +119,8 @@ function getWheelForward(
  * Get the wheel's lateral (axle) direction in world space.
  * The axle is along the chassis-local X axis, with sign determined by isLeft.
  */
-function getWheelRight(rotation: Quat, isLeft: boolean): Vec3 {
-  const ax = isLeft ? -1 : 1
-  const localRight: Vec3 = { x: ax, y: 0, z: 0 }
+function getWheelRight(rotation: Quat, _isLeft: boolean): Vec3 {
+  const localRight: Vec3 = { x: -1, y: 0, z: 0 }
   return quatRotate(rotation, localRight)
 }
 
@@ -163,7 +162,7 @@ export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
   let appliedHandbrakeImpulse = false
 
   // Forward speed needed for handbrake impulse magnitude
-  const chassisForward = quatRotate(chassisRotation, { x: 0, y: 0, z: 1 })
+  const chassisForward = quatRotate(chassisRotation, { x: 0, y: 0, z: -1 })
   const forwardSpeed = dot(chassisLinvel, chassisForward)
 
   for (let i = 0; i < wheelConfigs.length; i++) {
@@ -255,7 +254,7 @@ export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
     })
   }
 
-  // Handbrake lateral impulse — kick the rear out
+  // Handbrake lateral impulse — kick the rear out using applyImpulseAtPoint for yaw torque
   if (input.handbrake && Math.abs(forwardSpeed) > MIN_SPEED_THRESHOLD) {
     appliedHandbrakeImpulse = true
 
@@ -267,7 +266,25 @@ export function updateDriftPhysics(args: DriftPhysicsArgs): DriftPhysicsResult {
     const impulseMag = Math.min(Math.abs(forwardSpeed) * 15, 300) * handbrakeForceMultiplier
 
     const impulse = scale(impulseDir, impulseMag)
-    if (chassis.applyImpulse) {
+
+    // Compute rear axle midpoint in world space to apply impulse at a point
+    // This creates a yaw torque around the COM instead of just sliding sideways
+    const rearAxleLocal: Vec3 = {
+      x: (wheelConfigs[2].connection[0] + wheelConfigs[3].connection[0]) / 2,
+      y: (wheelConfigs[2].connection[1] + wheelConfigs[3].connection[1]) / 2,
+      z: (wheelConfigs[2].connection[2] + wheelConfigs[3].connection[2]) / 2,
+    }
+    const rearAxleWorldOffset = quatRotate(chassisRotation, rearAxleLocal)
+    const chassisPos = chassis.translation()
+    const rearAxlePoint: Vec3 = {
+      x: chassisPos.x + rearAxleWorldOffset.x,
+      y: chassisPos.y + rearAxleWorldOffset.y,
+      z: chassisPos.z + rearAxleWorldOffset.z,
+    }
+
+    if (chassis.applyImpulseAtPoint) {
+      chassis.applyImpulseAtPoint(impulse, rearAxlePoint, true)
+    } else if (chassis.applyImpulse) {
       chassis.applyImpulse(impulse, true)
     }
   }

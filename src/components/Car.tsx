@@ -21,7 +21,7 @@ const WHEEL_HEIGHT = 0.2
 const AXLE_OFFSET = 0.8
 
 const ENGINE_FORCE = 800
-const MAX_BRAKE_FORCE = 30
+const MAX_BRAKE_FORCE = 100
 const HANDBRAKE_FORCE = 300
 const MAX_STEER = 0.5
 
@@ -71,11 +71,9 @@ export default function Car({ chassisRef }: CarProps) {
     const rawWorld = (world as any).raw || world
     const rawBody = (body as any).raw || body
 
-    // Pass the configuration object directly into the initialization function
-    const controller = rawWorld.createVehicleController(rawBody, {
-      indexUpAxis: 1,
-      indexForwardAxis: 2
-    })
+    const controller = rawWorld.createVehicleController(rawBody)
+    controller.indexUpAxis = 1
+    controller.setIndexForwardAxis(2)
 
     // Add wheels
     const suspensionDirection = createRapierVector(rapier, 0, -1, 0)
@@ -83,15 +81,15 @@ export default function Car({ chassisRef }: CarProps) {
     for (let i = 0; i < 4; i++) {
       const cfg = WHEEL_CONFIGS[i]
       const connection = createRapierVector(rapier, cfg.connection[0], cfg.connection[1], cfg.connection[2])
-      const axleDir = createRapierVector(rapier, cfg.isLeft ? -1 : 1, 0, 0)
+      const axleDir = createRapierVector(rapier, -1, 0, 0)
 
-      controller.addWheel(connection, suspensionDirection, axleDir, 0.3, WHEEL_RADIUS)
+      controller.addWheel(connection, suspensionDirection, axleDir, 0.4, WHEEL_RADIUS)
 
       // Configure suspension
-      controller.setWheelSuspensionStiffness(i, 30)
-      controller.setWheelSuspensionCompression(i, 4)
-      controller.setWheelSuspensionRelaxation(i, 5)
-      controller.setWheelMaxSuspensionTravel(i, 0.3)
+      controller.setWheelSuspensionStiffness(i, 50)
+      controller.setWheelSuspensionCompression(i, 8)
+      controller.setWheelSuspensionRelaxation(i, 10)
+      controller.setWheelMaxSuspensionTravel(i, 0.5)
       controller.setWheelMaxSuspensionForce(i, 10000)
       controller.setWheelFrictionSlip(i, 1.0)
       controller.setWheelSideFrictionStiffness(i, 1.0)
@@ -303,12 +301,10 @@ export default function Car({ chassisRef }: CarProps) {
       group.position.set(cfg.connection[0], cfg.connection[1] - suspLength + WHEEL_RADIUS, cfg.connection[2])
 
       // X-axis rolls forward/backward, Y-axis steers left/right for front wheels
-      const roll = wheelRot * (cfg.isLeft ? -1 : 1)
+      const roll = -wheelRot * (cfg.isLeft ? -1 : 1)  // negated for Rapier's convention
       const steer = cfg.isFront ? steering : 0
 
-      // Explicitly set rotation axes to avoid wiping base orientation or causing visual pops
-      group.rotation.x = roll
-      group.rotation.y = steer
+      group.rotation.set(roll, steer, 0)
     }
   })
 
