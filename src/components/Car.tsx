@@ -1,14 +1,15 @@
 import { useRef, useEffect } from 'react'
-import { Mesh } from 'three'
+import { Mesh, Vector3 as ThreeVector3 } from 'three'
 import { RigidBody, useRapier, CuboidCollider } from '@react-three/rapier'
 import { useFrame } from '@react-three/fiber'
 import { useInputStore } from '../store/inputStore'
 import { useGameStore } from '../store/gameStore'
 import { useTelemetryStore } from '../store/telemetryStore'
+import { setVisualEffectsData } from '../store/visualEffectsStore'
 import { updateDriftPhysics } from '../physics/DriftPhysics'
 import { getDriftAssistParams, applyAssists } from '../physics/AssistsManager'
 import { createDriftDetectionSystem } from '../physics/DriftDetectionSystem'
-import { magnitude } from '../physics/vecMath'
+import { magnitude, quatRotate } from '../physics/vecMath'
 import type { RapierRigidBody } from '@react-three/rapier'
 import type { DriftState } from '../physics/DriftDetectionSystem'
 
@@ -214,6 +215,35 @@ export default function Car({ chassisRef }: CarProps) {
         isDrifting: driftStateRef.current.isDrifting,
       })
 
+      // --- Publish wheel data for visual effects (smoke, skid marks) ---
+      const t = chassis.translation()
+      const r = chassis.rotation()
+      const tVec = { x: t.x, y: t.y, z: t.z }
+      const qVec = { x: r.x, y: r.y, z: r.z, w: r.w }
+      const wheelVisuals = driftResult.wheelData.map((wd, idx) => {
+        const cfg = WHEEL_CONFIGS[idx]
+        // Compute world position of wheel contact point
+        const localOffset = { x: cfg.connection[0], y: cfg.connection[1], z: cfg.connection[2] }
+        const worldOffset = quatRotate(qVec, localOffset)
+        const worldPos = new ThreeVector3(
+          tVec.x + worldOffset.x,
+          tVec.y + worldOffset.y,
+          tVec.z + worldOffset.z,
+        )
+        const isSlipping = !wd.isGripping
+        return {
+          worldPosition: worldPos,
+          isSlipping,
+          slipIntensity: isSlipping ? Math.min(1, Math.abs(wd.slipAngleRad) / 0.5) : 0,
+          longitudinalVelocity: wd.longitudinalVelocity,
+        }
+      })
+      setVisualEffectsData({
+        wheels: wheelVisuals,
+        isDrifting: newDriftState.isDrifting,
+        speedKmh,
+      })
+
       // Use the adjusted steer for the rest of the frame
       rawTargetSteer = clampedSteer
     }
@@ -290,7 +320,7 @@ export default function Car({ chassisRef }: CarProps) {
         type="dynamic"
         colliders={false}
         mass={150}
-        position={[0, 1.0, 0]}
+        position={[0, 1.0, -18]}
         enabledRotations={[true, true, true]}
       >
         <CuboidCollider
